@@ -1,5 +1,6 @@
 import customtkinter
-from tkinter import StringVar
+import tkinter as tk
+from tkinter import StringVar, filedialog
 import sqlite3
 import os
 import re
@@ -11,7 +12,6 @@ current_dictionary = {"default_term": "default_definition"}
 data_file_directory = None
 
 import_window_on = 0 # 0=off, 1=on
-
 gameplay_on = 0 # 0=in menu, 1=in game
 gameplay_stage = 0 # 0=term, 1=definition
 
@@ -45,8 +45,9 @@ class BackEnd:
         self.max_index_value = [0]
         self.add_term = []
         self.add_definition = []
-        self.folder_path = "auto-flashcard/Data"
-        self.database_path = os.path.join(self.folder_path, self.database_namedef)
+        self.folder_path = "auto-flashcard"
+        self.data_folder = f"{self.folder_path}" + "/Data"
+        self.database_path = os.path.join(self.data_folder, self.database_namedef)
 
     # Database Related Functions
     def sanitize_input(self, input):
@@ -59,8 +60,8 @@ class BackEnd:
         
     def setup_database(self):
         # Ensure db folder exists
-        if not os.path.exists(self.folder_path):
-            os.makedirs(self.folder_path)
+        if not os.path.exists(self.data_folder):
+            os.makedirs(self.data_folder)
 
         # Create db file if it doesnt exist
         if not os.path.exists(self.database_path):
@@ -131,6 +132,23 @@ class BackEnd:
         cursor = conn.cursor()
         insert_term_definition = f"INSERT INTO {glossary} (term, definition) VALUES ('{term}', '{definition}');"
         cursor.execute(insert_term_definition)
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+    def escape_quotes(self, input):
+        return input.replace("'", "''")
+
+    def add_glossary_term_definition_import(self):
+        glossary = self.sanitize_input(self.current_glossary[0])
+        conn = sqlite3.connect(self.database_path)
+        cursor = conn.cursor()
+        for term in self.glossary_dict.keys():
+            definition = self.glossary_dict[term]
+            safe_term = self.escape_quotes(term)
+            safe_def = self.escape_quotes(definition)
+            insert_term_definition = f"INSERT INTO {glossary} (term, definition) VALUES ('{safe_term}', '{safe_def}');"
+            cursor.execute(insert_term_definition)
         conn.commit()
         cursor.close()
         conn.close()
@@ -352,6 +370,11 @@ class BackEnd:
         self.setup_database()
         print("Database Initialized")
 
+    def choose_file(self):
+        file_path = filedialog.askopenfilename(title="Select a file",
+                                           filetypes=(("Markdown files", "*.md"), ("All files", "*.*")))
+        self.chosen_file = file_path
+    
     # Debug / Test Methods
     def add_50_test_terms(self):
         term_number = 1
@@ -361,6 +384,23 @@ class BackEnd:
             self.add_glossary_term_definition()
             term_number += 1
  
+    def parse_highlight_1_line(self, file_path):
+        with open(file_path, 'r') as file:
+            lines = file.readlines()
+
+        self.glossary_dict = {}
+        pattern = re.compile(r'<mark style="background: #[A-Fa-f0-9]{8};">(.*?):</mark>\s*(.*)')
+
+        for line_number, line in enumerate(lines):
+            match = pattern.search(line)
+            if match:
+                term = match.group(1).strip()
+                definition = match.group(2).strip()
+                self.glossary_dict[term] = definition
+            else:
+                print(f"No glossary entry found in line {line_number}: {line.strip()}")
+
+        return self.glossary_dict, print(self.glossary_dict)
 
 class MyTabView(customtkinter.CTkTabview):
     def __init__(self, master, **kwargs):
@@ -399,8 +439,8 @@ class MyTabView(customtkinter.CTkTabview):
         self.available_glossaries_label.grid (row=2, column=2, padx=10, pady=10)
         self.add_glossary = customtkinter.CTkButton(self.play_tab, text="Add Custom Glossary", command=self.add_glossary_manually)
         self.add_glossary.grid (row=3, column=1, padx=10, pady=10)
-        self.import_glossary = customtkinter.CTkButton(self.play_tab, text="Import Glossary", command=self.backend.add_test_glossaries)
-        self.import_glossary.grid (row=3, column=2, padx=10, pady=10)
+        self.import_glossary_button = customtkinter.CTkButton(self.play_tab, text="Import Glossary", command=self.backend.add_test_glossaries)
+        self.import_glossary_button.grid (row=3, column=2, padx=10, pady=10)
         self.add_term_manually = customtkinter.CTkButton(self.play_tab, text="Add Term", command=self.add_card_manually)
         self.add_term_manually.grid (row=3,column=3, padx=10, pady=10)
         self.test_button3 = customtkinter.CTkButton(self.play_tab, text="Test Button", command=self.open_glossary_selection)
@@ -427,6 +467,8 @@ class MyTabView(customtkinter.CTkTabview):
         self.add_50_test_terms_button.grid (row=1, column=2, padx=10, pady=10)
         self.add_test_glossary = customtkinter.CTkButton(self.settings_tab, text="Add Test Glossary", command=self.backend.add_test_glossaries)
         self.add_test_glossary.grid (row=2, column=2, padx=10, pady=10)
+        self.import_highlight_1_line = customtkinter.CTkButton(self.settings_tab, text="Import Highlight 1 Line", command=self.import_glossary)
+        self.import_highlight_1_line.grid (row=3, column=2, padx=10, pady=10)
 
        # self.textbox = customtkinter.CTkTextbox(self.settings_tab, width=100, height=100, corner_radius=0)
        # self.textbox.grid(row=4, column=4, padx=100, pady=10)
@@ -441,7 +483,13 @@ class MyTabView(customtkinter.CTkTabview):
         # self.test_button4 = customtkinter.CTkButton(self.play_tab, text="Play Game", command=self.open_game_frame, height=50, width=125)
         # self.test_button4.grid (row=5, column=4, padx=100, pady=10)
 
+    # Import Functions
+    def import_glossary(self):
+        self.backend.choose_file()
+        self.backend.parse_highlight_1_line(self.backend.chosen_file)
+        self.backend.add_glossary_term_definition_import()
 
+        
 
     # Manual Glossary Input
     def add_glossary_manually(self):
